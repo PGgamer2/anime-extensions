@@ -5,12 +5,14 @@ import aniyomi.lib.playlistutils.PlaylistUtils
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.AnimesPage
+import eu.kanade.tachiyomi.animesource.model.Hoster
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
+import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.util.asJsoup
-import keiyoushi.utils.ParsedAnimeHttpLegacySource
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.delegate
 import keiyoushi.utils.getPreferencesLazy
@@ -18,13 +20,13 @@ import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
 import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.util.Calendar
 import kotlin.io.encoding.Base64
+import kotlin.text.replace
 
 class AnimeSaturn :
-    ParsedAnimeHttpLegacySource(),
+    AnimeHttpSource(),
     ConfigurableAnimeSource {
 
     override val name = "AnimeSaturn"
@@ -44,24 +46,16 @@ class AnimeSaturn :
 
     override val baseUrl by preferences.delegate(PREF_DOMAIN, DOMAIN_DEFAULT)
 
-    override fun popularAnimeSelector(): String = "a.group[href]:not(.flex)"
-
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/ongoing/$page")
+    override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
 
     private fun formatTitle(titlestring: String): String = titlestring.replace("(ITA)", "Dub ITA")
 
-    override fun popularAnimeFromElement(element: Element): SAnime = searchAnimeFromElement(element)
-
-    override fun popularAnimeNextPageSelector(): String = "a[rel=\"next\"]"
-
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
-        return document.select(episodeListSelector()).map { episodeFromElement(it) }.reversed()
+        return document.select("a.ep-tile").map { episodeFromElement(it) }.reversed()
     }
-
-    override fun episodeListSelector() = "a.ep-tile"
-
-    override fun episodeFromElement(element: Element): SEpisode {
+    fun episodeFromElement(element: Element): SEpisode {
         val episode = SEpisode.create()
         episode.setUrlWithoutDomain(element.attr("href").replace("episode/", "anime/").replace("watch/", "stream/"))
         val epText = element.attr("title")
@@ -70,28 +64,20 @@ class AnimeSaturn :
         return episode
     }
 
-    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
+    override fun hosterListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, headers)
 
-    override fun videoListParse(response: Response): List<Video> {
-        if (response.code != 200) {
-            return emptyList()
-        }
-
-        val token = response.request.url.queryParameter("token") ?: return emptyList()
-        val playlistModel = response.parseAs<PlaylistModel>()
-        val videoUrl = decodeUrl(playlistModel.d, token)
-        if (videoUrl.contains(".mp4")) {
-            return listOf(
-                Video(
-                    videoUrl,
-                    "Qualità predefinita",
-                    videoUrl,
-                ),
-            )
-        }
-
-        return playlistUtils.extractFromHls(videoUrl)
+    override fun hosterListParse(response: Response): List<Hoster> {
+        val episodePage = response.asJsoup()
+        val url = episodePage.selectFirst("iframe")!!.attr("src")
+        return listOf(
+            Hoster(
+                hosterUrl = url.replace("?", "/playlist?"),
+                internalData = url,
+            ),
+        )
     }
+
+    private val playlistUtils by lazy { PlaylistUtils(client, headers) }
 
     private fun decodeUrl(url: String, token: String): String {
         val base = Base64.decode(url).decodeToString()
@@ -102,18 +88,30 @@ class AnimeSaturn :
         return builder.toString()
     }
 
-    override fun videoListRequest(episode: SEpisode): Request {
-        val episodePage = client.newCall(GET(baseUrl + episode.url)).execute().asJsoup()
-        val url = episodePage.selectFirst("iframe")!!.attr("src")
-        return Request.Builder()
-            .url(url.replace("?", "/playlist?"))
-            .header("Referer", url)
+    override suspend fun getVideoList(hoster: Hoster): List<Video> {
+        val request = Request.Builder()
+            .url(hoster.hosterUrl)
+            .header("Referer", hoster.internalData)
             .build()
+        val response = client.newCall(request).execute()
+        if (response.code != 200) {
+            return emptyList()
+        }
+
+        val token = response.request.url.queryParameter("token") ?: return emptyList()
+        val playlistModel = response.parseAs<PlaylistModel>()
+        val videoUrl = decodeUrl(playlistModel.d, token)
+        if (videoUrl.contains(".mp4")) {
+            return listOf(
+                Video(
+                    videoUrl = videoUrl,
+                    videoTitle = "Qualità predefinita",
+                ),
+            )
+        }
+
+        return playlistUtils.extractFromHls(videoUrl)
     }
-
-    override fun videoListSelector() = throw UnsupportedOperationException()
-
-    override fun videoFromElement(element: Element) = throw UnsupportedOperationException()
 
     override fun List<Video>.sortVideos(): List<Video> {
         val prQuality = preferences.getString(PREF_QUALITY, QUALITY_DEFAULT)!!
@@ -123,7 +121,7 @@ class AnimeSaturn :
         )
     }
 
-    override fun searchAnimeFromElement(element: Element): SAnime {
+    fun searchAnimeFromElement(element: Element): SAnime {
         val anime = SAnime.create()
         anime.setUrlWithoutDomain(element.attr("href"))
         anime.title = formatTitle(element.selectFirst("h3")!!.text())
@@ -131,16 +129,19 @@ class AnimeSaturn :
         return anime
     }
 
-    override fun searchAnimeNextPageSelector(): String = "a[rel=\"next\"]"
-
-    override fun searchAnimeSelector(): String = "a.group[href]:not(.flex)"
-
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val parameters = getSearchParameters(filters)
         return GET("$baseUrl/filter/$page?key=$query$parameters")
     }
 
-    override fun animeDetailsParse(document: Document): SAnime {
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val document = response.asJsoup()
+        val anime = document.select("a.group[href]:not(.flex)").map(::searchAnimeFromElement)
+        return AnimesPage(anime, document.selectFirst("a[rel=\"next\"]") != null)
+    }
+
+    override fun animeDetailsParse(response: Response): SAnime {
+        val document = response.asJsoup()
         val anime = SAnime.create()
         anime.title = formatTitle(document.selectFirst("h1")!!.text())
         anime.author = document.selectFirst("div a[href*=studios]")?.text()
@@ -161,12 +162,10 @@ class AnimeSaturn :
         else -> SAnime.UNKNOWN
     }
 
-    override fun latestUpdatesSelector(): String = "a.group[href]:not(.flex)"
-
-    override fun latestUpdatesFromElement(element: Element): SAnime = searchAnimeFromElement(element)
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/newest/$page")
+    override fun latestUpdatesParse(response: Response): AnimesPage = searchAnimeParse(response)
 
-    override fun latestUpdatesNextPageSelector(): String = "a[rel=\"next\"]"
+    override fun seasonListParse(response: Response): List<SAnime> = throw UnsupportedOperationException()
 
     // Filters
     internal class Genre(val id: String) : AnimeFilter.CheckBox(id)
