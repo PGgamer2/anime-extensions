@@ -7,7 +7,7 @@ yuzono {
     className = "AnimeSaturn"
     versionCode = 15
     contentWarning = ContentWarning.SAFE
-    libVersion = "14"
+    libVersion = "16"
 }
 
 dependencies {
