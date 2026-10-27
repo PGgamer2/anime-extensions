@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.delegate
@@ -71,6 +72,7 @@ class AnimeSaturn :
         val url = episodePage.selectFirst("iframe")!!.attr("src")
         return listOf(
             Hoster(
+                hosterName = "AnimeSaturn Server",
                 hosterUrl = url.replace("?", "/playlist?"),
                 internalData = url,
             ),
@@ -93,24 +95,21 @@ class AnimeSaturn :
             .url(hoster.hosterUrl)
             .header("Referer", hoster.internalData)
             .build()
-        val response = client.newCall(request).execute()
-        if (response.code != 200) {
-            return emptyList()
-        }
+        client.newCall(request).awaitSuccess().use { response ->
+            val token = response.request.url.queryParameter("token") ?: return emptyList()
+            val playlistModel = response.parseAs<PlaylistModel>()
+            val videoUrl = decodeUrl(playlistModel.d, token)
 
-        val token = response.request.url.queryParameter("token") ?: return emptyList()
-        val playlistModel = response.parseAs<PlaylistModel>()
-        val videoUrl = decodeUrl(playlistModel.d, token)
-        if (videoUrl.contains(".mp4")) {
-            return listOf(
-                Video(
-                    videoUrl = videoUrl,
-                    videoTitle = "Qualità predefinita",
-                ),
-            )
+            if (videoUrl.contains(".mp4")) {
+                return listOf(
+                    Video(
+                        videoUrl = videoUrl,
+                        videoTitle = "Qualità predefinita",
+                    ),
+                )
+            }
+            return playlistUtils.extractFromHls(videoUrl)
         }
-
-        return playlistUtils.extractFromHls(videoUrl)
     }
 
     override fun List<Video>.sortVideos(): List<Video> {
