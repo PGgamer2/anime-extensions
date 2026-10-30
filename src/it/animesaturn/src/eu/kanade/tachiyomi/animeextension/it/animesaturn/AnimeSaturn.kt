@@ -15,7 +15,6 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
 import keiyoushi.utils.addListPreference
-import keiyoushi.utils.delegate
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
 import kotlinx.serialization.Serializable
@@ -30,22 +29,9 @@ class AnimeSaturn :
     AnimeHttpSource(),
     ConfigurableAnimeSource {
 
-    override val name = "AnimeSaturn"
-
-    override val lang = "it"
-
     override val supportsLatest = true
 
-    private val preferences by getPreferencesLazy {
-        val currentDomain = getString(PREF_DOMAIN, DOMAIN_DEFAULT)!!
-        if (currentDomain !in DOMAIN_VALUES) {
-            edit()
-                .putString(PREF_DOMAIN, DOMAIN_DEFAULT)
-                .apply()
-        }
-    }
-
-    override val baseUrl by preferences.delegate(PREF_DOMAIN, DOMAIN_DEFAULT)
+    private val preferences by getPreferencesLazy()
 
     override fun popularAnimeRequest(page: Int): Request = GET("$baseUrl/ongoing/$page")
     override fun popularAnimeParse(response: Response): AnimesPage = searchAnimeParse(response)
@@ -304,15 +290,6 @@ class AnimeSaturn :
             default = QUALITY_DEFAULT,
             summary = "%s",
         )
-
-        screen.addListPreference(
-            key = PREF_DOMAIN,
-            title = "Domain in uso (riavvio dell'app richiesto)",
-            entries = DOMAIN_ENTRIES,
-            entryValues = DOMAIN_VALUES,
-            default = DOMAIN_DEFAULT,
-            summary = "%s",
-        )
     }
 
     companion object {
@@ -320,11 +297,6 @@ class AnimeSaturn :
         private val QUALITY_VALUES = listOf("1080", "720", "480", "360", "240", "144")
         private val QUALITY_ENTRIES = QUALITY_VALUES.map { "${it}p" }
         private val QUALITY_DEFAULT = QUALITY_VALUES.first()
-
-        private const val PREF_DOMAIN = "preferred_domain"
-        private val DOMAIN_ENTRIES = listOf("animesaturn.net", "animesaturn.cx", "animesaturn.cc", "animesaturn.com", "animemars.org")
-        private val DOMAIN_VALUES = DOMAIN_ENTRIES.map { "https://$it" }
-        private val DOMAIN_DEFAULT = DOMAIN_VALUES.first()
     }
 
     @Serializable
