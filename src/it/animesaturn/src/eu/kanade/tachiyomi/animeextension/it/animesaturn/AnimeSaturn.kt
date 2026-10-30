@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.util.asJsoup
+import keiyoushi.annotation.Source
 import keiyoushi.utils.addListPreference
 import keiyoushi.utils.getPreferencesLazy
 import keiyoushi.utils.parseAs
@@ -25,7 +26,8 @@ import java.util.Calendar
 import kotlin.io.encoding.Base64
 import kotlin.text.replace
 
-class AnimeSaturn :
+@Source
+abstract class AnimeSaturn :
     AnimeHttpSource(),
     ConfigurableAnimeSource {
 
